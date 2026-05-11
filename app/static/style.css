@@ -1,0 +1,132 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  background: #0f172a;
+  color: #e2e8f0;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem;
+}
+
+header {
+  margin-bottom: 2rem;
+}
+header h1 { font-size: 1.75rem; color: #f8fafc; }
+header p  { color: #94a3b8; margin-top: 0.25rem; }
+
+.controls {
+  display: flex;
+  gap: 1rem 2rem;
+  align-items: center;
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  background: #1e293b;
+  border-radius: 8px;
+  flex-wrap: wrap;
+}
+.control-group { display: flex; align-items: center; gap: 1rem; }
+
+button {
+  background: #3b82f6;
+  color: #fff;
+  border: none;
+  padding: 0.5rem 1.25rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  font-weight: 500;
+}
+button:hover { background: #2563eb; }
+button.running { background: #ef4444; }
+button.running:hover { background: #dc2626; }
+
+select,
+input {
+  background: #334155;
+  color: #e2e8f0;
+  border: 1px solid #475569;
+  padding: 0.4rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+select {
+  cursor: pointer;
+}
+input { width: 5.5rem; }
+label { font-size: 0.9rem; color: #cbd5e1; }
+#config-status {
+  color: #94a3b8;
+  font-size: 0.85rem;
+  width: 100%;
+}
+
+.dashboard {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.panel {
+  background: #1e293b;
+  border-radius: 8px;
+  padding: 1.25rem;
+}
+.panel h2 {
+  font-size: 1.1rem;
+  margin-bottom: 1rem;
+  color: #93c5fd;
+  border-bottom: 1px solid #334155;
+  padding-bottom: 0.5rem;
+}
+
+.panel table { width: 100%; border-collapse: collapse; }
+.panel td {
+  padding: 0.4rem 0;
+  font-size: 0.9rem;
+}
+.panel .label { color: #94a3b8; width: 160px; }
+.panel .value {
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  color: #f8fafc;
+  font-weight: 500;
+}
+
+.scenarios {
+  background: #1e293b;
+  border-radius: 8px;
+  padding: 1.25rem;
+}
+.scenarios h2 {
+  font-size: 1.1rem;
+  margin-bottom: 0.75rem;
+  color: #93c5fd;
+  border-bottom: 1px solid #334155;
+  padding-bottom: 0.5rem;
+}
+.scenarios > p { color: #94a3b8; font-size: 0.85rem; margin-bottom: 0.75rem; }
+.scenarios table { width: 100%; border-collapse: collapse; }
+.scenarios th {
+  text-align: left;
+  padding: 0.4rem 0.5rem;
+  font-size: 0.8rem;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.scenarios td {
+  padding: 0.35rem 0.5rem;
+  font-size: 0.85rem;
+  color: #cbd5e1;
+}
+.scenarios tbody tr:nth-child(odd) { background: #0f172a33; }
+
+#btn-export { background: #10b981; }
+#btn-export:hover { background: #059669; }
+#btn-reset { background: #64748b; }
+#btn-reset:hover { background: #475569; }
+
+@media (max-width: 700px) {
+  .dashboard { grid-template-columns: 1fr; }
+}

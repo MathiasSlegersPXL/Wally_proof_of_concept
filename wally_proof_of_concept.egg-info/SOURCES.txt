@@ -1,8 +1,0 @@
-pyproject.toml
-app/__init__.py
-app/main.py
-wally_proof_of_concept.egg-info/PKG-INFO
-wally_proof_of_concept.egg-info/SOURCES.txt
-wally_proof_of_concept.egg-info/dependency_links.txt
-wally_proof_of_concept.egg-info/requires.txt
-wally_proof_of_concept.egg-info/top_level.txt

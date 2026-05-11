@@ -1,2 +1,22 @@
-.venv/
+# Python
 __pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# Local environments
+.venv/
+venv/
+
+# Node/frontend scratch
+node_modules/
+frontend/node_modules/
+
+# Local benchmark output
+results/

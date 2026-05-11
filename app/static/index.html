@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Wally POC - Update Strategies</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <h1>Update Strategy Dashboard</h1>
+    <p>HTTP polling and long polling against simulated robot telemetry</p>
+  </header>
+
+  <section class="controls">
+    <div class="control-group">
+      <button id="btn-toggle">Start Polling</button>
+      <label>
+        Strategy
+        <select id="strategy-select">
+          <option value="polling" selected>Polling</option>
+          <option value="long_polling">Long Polling</option>
+        </select>
+      </label>
+      <label>
+        Poll interval
+        <select id="poll-interval-select">
+          <option value="100">100 ms</option>
+          <option value="250">250 ms</option>
+          <option value="500" selected>500 ms</option>
+          <option value="1000">1000 ms</option>
+          <option value="2000">2000 ms</option>
+        </select>
+      </label>
+      <label>
+        Long-poll timeout
+        <select id="long-poll-timeout-select">
+          <option value="10000">10000 ms</option>
+          <option value="30000" selected>30000 ms</option>
+          <option value="60000">60000 ms</option>
+        </select>
+      </label>
+      <label>
+        Data interval
+        <select id="generation-interval-select">
+          <option value="100">100 ms</option>
+          <option value="250">250 ms</option>
+          <option value="500">500 ms</option>
+          <option value="1000" selected>1000 ms</option>
+          <option value="2000">2000 ms</option>
+        </select>
+      </label>
+      <label>
+        Seed
+        <input id="seed-input" type="number" value="1" />
+      </label>
+    </div>
+    <div class="control-group">
+      <button id="btn-export">Export CSV</button>
+      <button id="btn-reset">Reset Metrics</button>
+    </div>
+    <p id="config-status">Generator config loading</p>
+  </section>
+
+  <main class="dashboard">
+    <section class="panel robot-panel">
+      <h2>Robot Data</h2>
+      <table>
+        <tr><td class="label">Status</td><td id="rob-status" class="value robot-value">-</td></tr>
+        <tr><td class="label">Bricks Placed</td><td id="rob-bricks" class="value robot-value">-</td></tr>
+        <tr><td class="label">Bricks / min</td><td id="rob-bpm" class="value robot-value">-</td></tr>
+        <tr><td class="label">Error Code</td><td id="rob-error" class="value robot-value">-</td></tr>
+        <tr><td class="label">Glue Quality</td><td id="rob-glue" class="value robot-value">-</td></tr>
+        <tr><td class="label">Message ID</td><td id="rob-msgid" class="value robot-value">-</td></tr>
+        <tr><td class="label">Last Update</td><td id="rob-time" class="value robot-value">-</td></tr>
+      </table>
+    </section>
+
+    <section class="panel metrics-panel">
+      <h2>Request Metrics</h2>
+      <table>
+        <tr><td class="label">Requests Sent</td><td id="met-requests">0</td></tr>
+        <tr><td class="label">Successful (200)</td><td id="met-success">0</td></tr>
+        <tr><td class="label">Empty (204)</td><td id="met-empty">0</td></tr>
+        <tr><td class="label">Errors</td><td id="met-errors">0</td></tr>
+        <tr><td class="label">Duplicates</td><td id="met-dupes">0</td></tr>
+        <tr><td class="label">Missed Messages</td><td id="met-missed">0</td></tr>
+        <tr><td class="label">Downloaded Bytes</td><td id="met-bytes">0</td></tr>
+        <tr><td class="label">Avg Data Age</td><td id="met-avgdatage">-</td></tr>
+        <tr><td class="label">Min Data Age</td><td id="met-mindatage">-</td></tr>
+        <tr><td class="label">Max Data Age</td><td id="met-maxdatage">-</td></tr>
+        <tr><td class="label">Avg Req Latency</td><td id="met-avglat">-</td></tr>
+        <tr><td class="label">Min Req Latency</td><td id="met-minlat">-</td></tr>
+        <tr><td class="label">Max Req Latency</td><td id="met-maxlat">-</td></tr>
+      </table>
+    </section>
+  </main>
+
+  <section class="scenarios">
+    <h2>Test Scenarios</h2>
+    <p>Recommended scenarios for quantitative comparison:</p>
+    <table>
+      <thead>
+        <tr><th>Scenario</th><th>Data Interval</th><th>Poll Interval</th><th>Duration</th><th>Expected Insight</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>1</td><td>1000 ms</td><td>1000 ms</td><td>60 s</td><td>Baseline: poll interval = data interval</td></tr>
+        <tr><td>2</td><td>1000 ms</td><td>500 ms</td><td>60 s</td><td>Polling faster than data: expected ~50% duplicates</td></tr>
+        <tr><td>3</td><td>1000 ms</td><td>100 ms</td><td>60 s</td><td>Polling far faster: high duplicates, high load</td></tr>
+        <tr><td>4</td><td>250 ms</td><td>1000 ms</td><td>60 s</td><td>Polling slower than data: missed updates</td></tr>
+        <tr><td>5</td><td>1000 ms</td><td>Long poll 30000 ms</td><td>60 s</td><td>Lower duplicates and request count</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

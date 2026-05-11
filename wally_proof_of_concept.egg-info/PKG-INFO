@@ -1,6 +1,0 @@
-Metadata-Version: 2.4
-Name: wally-proof-of-concept
-Version: 0.1.0
-Requires-Python: >=3.11
-Requires-Dist: fastapi>=0.115.0
-Requires-Dist: uvicorn>=0.30.0
