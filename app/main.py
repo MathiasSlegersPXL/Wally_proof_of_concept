@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from app.data_generator import RobotDataGenerator
 from app.strategies.long_polling import router as long_polling_router
 from app.strategies.polling import router as polling_router
+from app.strategies.sse import router as sse_router
 
 
 generator = RobotDataGenerator(interval_ms=1000)
@@ -42,6 +43,7 @@ app.add_middleware(
 
 app.include_router(polling_router)
 app.include_router(long_polling_router)
+app.include_router(sse_router)
 
 
 @app.get("/api/health")

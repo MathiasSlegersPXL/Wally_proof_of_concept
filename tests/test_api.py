@@ -1,10 +1,12 @@
 import asyncio
+import json
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.data_generator import RobotDataGenerator
 from app.main import app
+from app.strategies.sse import event_stream
 
 
 @pytest.fixture
@@ -110,3 +112,68 @@ async def test_long_polling_latest_rejects_invalid_timeout(client):
     response = await client.get("/api/long-polling/latest?timeout_ms=999")
 
     assert response.status_code == 422
+
+
+@pytest.mark.anyio
+async def test_sse_latest_stream_returns_first_event_with_current_data(client):
+    await client.post("/api/simulation/config", json={"interval_ms": 1000, "seed": 1})
+    request = FakeSseRequest(disconnect_after_checks=2)
+
+    stream = event_stream(request, client.generator, last_message_id=None)
+    event = await anext(stream)
+    await stream.aclose()
+
+    parsed = parse_sse_event(event)
+    assert parsed["event"] == "telemetry"
+    assert parsed["id"] == "1"
+
+    body = json.loads(parsed["data"])
+    assert body["strategy"] == "sse"
+    assert "served_at" in body
+    assert "server_processing_ms" in body
+    assert body["data"]["message_id"] == 1
+
+
+@pytest.mark.anyio
+async def test_sse_latest_stream_returns_future_message_after_last_event_id(client):
+    await client.post("/api/simulation/config", json={"interval_ms": 1000, "seed": 1})
+    request = FakeSseRequest(disconnect_after_checks=3)
+
+    stream = event_stream(request, client.generator, last_message_id=1)
+    event_task = asyncio.create_task(anext(stream))
+    await asyncio.sleep(0)
+    await client.generator.generate_once()
+    event = await event_task
+    await stream.aclose()
+
+    parsed = parse_sse_event(event)
+    body = json.loads(parsed["data"])
+    assert parsed["id"] == "2"
+    assert body["data"]["message_id"] == 2
+
+
+class FakeSseRequest:
+    def __init__(self, disconnect_after_checks: int):
+        self.disconnect_after_checks = disconnect_after_checks
+        self.checks = 0
+
+    async def is_disconnected(self):
+        self.checks += 1
+        return self.checks > self.disconnect_after_checks
+
+
+def parse_sse_event(raw_event: str) -> dict:
+    parsed = {"event": None, "id": None, "data": ""}
+    data_lines = []
+    for line in raw_event.strip().splitlines():
+        field, _, value = line.partition(":")
+        if value.startswith(" "):
+            value = value[1:]
+        if field == "event":
+            parsed["event"] = value
+        elif field == "id":
+            parsed["id"] = value
+        elif field == "data":
+            data_lines.append(value)
+    parsed["data"] = "\n".join(data_lines)
+    return parsed

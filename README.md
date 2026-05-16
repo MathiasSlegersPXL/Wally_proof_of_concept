@@ -1,19 +1,20 @@
 # Wally Proof of Concept
 
-HTTP polling and long-polling baseline for comparing real-time dashboard update strategies against simulated robot telemetry.
+HTTP polling, long-polling, and Server-Sent Events baseline for comparing real-time dashboard update strategies against simulated robot telemetry.
 
-Part of the Wally Automation research track — the goal is to quantitatively compare polling, long polling, SSE, WebSocket, and MQTT for operational robot monitoring. This repository currently implements the HTTP-based polling strategies first.
+Part of the Wally Automation research track — the goal is to quantitatively compare polling, long polling, SSE, WebSocket, and MQTT for operational robot monitoring. This repository currently implements the HTTP-based polling strategies and SSE server push.
 
 ## Architecture
 
 ```
-RobotDataGenerator ──(latest state / notifications)──> FastAPI ──(HTTP GET)──> Browser or CLI
+RobotDataGenerator ──(latest state / notifications)──> FastAPI ──(HTTP/SSE)──> Browser or CLI
    (background task)                               polling: immediate response
                                                    long polling: wait for new data
+                                                   SSE: persistent server-push stream
 ```
 
 - **Data Generator** (`app/data_generator.py`) — runs a background asyncio task that produces robot telemetry at a configurable interval. Stores only the latest state in memory. Deterministic when seeded.
-- **FastAPI** (`app/main.py`, `app/strategies/`) — exposes short polling and long polling endpoints and lets the frontend or CLI reconfigure the generator at runtime.
+- **FastAPI** (`app/main.py`, `app/strategies/`) — exposes short polling, long polling, and SSE endpoints and lets the frontend or CLI reconfigure the generator at runtime.
 - **Frontend** (`app/static/`) — vanilla JS dashboard for interactive testing: choose strategy, adjust intervals, view live data and metrics, export CSV.
 - **Benchmark runner** (`scripts/run_polling_benchmark.py`) — headless CLI tool that runs a timed polling session and writes raw CSV + summary JSON to `results/`.
 
@@ -35,13 +36,13 @@ Open `http://127.0.0.1:8000`.
 
 The dashboard controls let you set:
 
-- **Strategy** — short polling or long polling
+- **Strategy** — short polling, long polling, or SSE
 - **Data generation interval** — how often the simulated robot produces a new measurement (50–10000 ms)
 - **Polling interval** — how often the browser fetches the latest state (100–2000 ms)
 - **Long-poll timeout** — how long the server may hold a request while waiting for newer data
 - **Seed** — deterministic starting point for the pseudo-random generator; same seed = same data sequence across runs
 
-Pressing **Start Polling** resets the generator and begins a new measurement session. Press **Stop Polling** ends it. **Export CSV** downloads all per-request measurements.
+Pressing **Start** resets the generator and begins a new measurement session. Press **Stop** ends it. **Export CSV** downloads all per-request or per-event measurements.
 
 ## API
 
@@ -52,6 +53,7 @@ Pressing **Start Polling** resets the generator and begins a new measurement ses
 | `POST` | `/api/simulation/config` | Update generator interval and seed |
 | `GET` | `/api/polling/latest` | Latest robot state (204 if no data yet) |
 | `GET` | `/api/long-polling/latest` | Latest newer robot state, waiting until data or timeout |
+| `GET` | `/api/sse/latest` | Persistent SSE stream of robot states |
 
 ### POST /api/simulation/config
 
@@ -94,6 +96,18 @@ Query parameters:
 
 If the server already has newer data than `last_message_id`, it responds immediately with `200`. If not, it holds the request until a new message is generated or the timeout expires. Timeout returns `204`.
 
+### GET /api/sse/latest
+
+Returns a `text/event-stream` response. On connect, the stream sends the latest robot state if one is available, then sends each newly generated state as an SSE event:
+
+```text
+event: telemetry
+id: 42
+data: {"strategy":"sse","served_at":1778502006821,"server_processing_ms":0.01,"data":{...}}
+```
+
+Browsers automatically send `Last-Event-ID` after reconnects. The API uses that value to avoid replaying the same latest message when the client reconnects.
+
 ## Metrics
 
 | Metric | Definition |
@@ -122,7 +136,7 @@ python scripts/run_polling_benchmark.py \
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--base-url` | `http://127.0.0.1:8000` | API server location |
-| `--strategy` | `polling` | `polling` or `long_polling` |
+| `--strategy` | `polling` | `polling`, `long_polling`, or `sse` |
 | `--generation-interval-ms` | (required) | Generator tick interval |
 | `--poll-interval-ms` | `1000` | Client poll interval for `polling` |
 | `--long-poll-timeout-ms` | `30000` | Server wait timeout for `long_polling` |
@@ -134,6 +148,7 @@ Output examples:
 
 - `results/polling_gen{gen}_poll{poll}_{timestamp}.csv`
 - `results/long_polling_gen{gen}_timeout{timeout}_{timestamp}.csv`
+- `results/sse_gen{gen}_{timestamp}.csv`
 
 Each CSV has raw request rows. Each JSON has summary averages, rates, totals, and timeout counts.
 
@@ -154,6 +169,9 @@ python scripts/run_polling_benchmark.py --generation-interval-ms 250 --poll-inte
 
 # Scenario 5 — Long polling: expect low duplicate count and fewer requests
 python scripts/run_polling_benchmark.py --strategy long_polling --generation-interval-ms 1000 --long-poll-timeout-ms 30000 --duration-seconds 60
+
+# Scenario 6 — SSE: expect low data age and one persistent stream
+python scripts/run_polling_benchmark.py --strategy sse --generation-interval-ms 1000 --duration-seconds 60
 ```
 
 ## Project Structure
@@ -164,7 +182,8 @@ app/
 ├── data_generator.py        # RobotDataGenerator: background telemetry simulation
 └── strategies/
     ├── polling.py           # GET /api/polling/latest endpoint
-    └── long_polling.py      # GET /api/long-polling/latest endpoint
+    ├── long_polling.py      # GET /api/long-polling/latest endpoint
+    └── sse.py               # GET /api/sse/latest event stream
 app/static/
 ├── index.html               # Polling dashboard UI
 ├── app.js                   # Polling logic, metrics tracking, CSV export
@@ -188,7 +207,7 @@ pytest
 
 - **No database** — polling latency and data age are the focus; a database would add noise unrelated to the strategy.
 - **No framework in the frontend** — vanilla JS keeps the measurement path transparent and avoids framework overhead in latency numbers.
-- **Shared data generator** — the same `RobotDataGenerator` feeds polling and long polling, and will feed SSE, WebSocket, and MQTT strategies later.
+- **Shared data generator** — the same `RobotDataGenerator` feeds polling, long polling, and SSE, and will feed WebSocket and MQTT strategies later.
 - **Long polling waits server-side** — the client passes `last_message_id`; the server waits for a newer generated message or returns `204` on timeout.
 - **Deterministic seeding** — same seed = same `message_id` sequence, same status transitions. Makes scenario re-runs directly comparable.
 

@@ -9,17 +9,18 @@
 <body>
   <header>
     <h1>Update Strategy Dashboard</h1>
-    <p>HTTP polling and long polling against simulated robot telemetry</p>
+    <p>Polling, long polling, and SSE against simulated robot telemetry</p>
   </header>
 
   <section class="controls">
     <div class="control-group">
-      <button id="btn-toggle">Start Polling</button>
+      <button id="btn-toggle">Start</button>
       <label>
         Strategy
         <select id="strategy-select">
           <option value="polling" selected>Polling</option>
           <option value="long_polling">Long Polling</option>
+          <option value="sse">SSE</option>
         </select>
       </label>
       <label>
@@ -79,7 +80,7 @@
     <section class="panel metrics-panel">
       <h2>Request Metrics</h2>
       <table>
-        <tr><td class="label">Requests Sent</td><td id="met-requests">0</td></tr>
+        <tr><td class="label">Requests / Events</td><td id="met-requests">0</td></tr>
         <tr><td class="label">Successful (200)</td><td id="met-success">0</td></tr>
         <tr><td class="label">Empty (204)</td><td id="met-empty">0</td></tr>
         <tr><td class="label">Errors</td><td id="met-errors">0</td></tr>
@@ -109,6 +110,7 @@
         <tr><td>3</td><td>1000 ms</td><td>100 ms</td><td>60 s</td><td>Polling far faster: high duplicates, high load</td></tr>
         <tr><td>4</td><td>250 ms</td><td>1000 ms</td><td>60 s</td><td>Polling slower than data: missed updates</td></tr>
         <tr><td>5</td><td>1000 ms</td><td>Long poll 30000 ms</td><td>60 s</td><td>Lower duplicates and request count</td></tr>
+        <tr><td>6</td><td>1000 ms</td><td>SSE stream</td><td>60 s</td><td>Server push with low request overhead</td></tr>
       </tbody>
     </table>
   </section>

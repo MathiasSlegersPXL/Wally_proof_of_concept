@@ -60,7 +60,7 @@ def main():
 def parse_args():
     parser = argparse.ArgumentParser(description="Run an update-strategy benchmark against the Wally PoC API.")
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
-    parser.add_argument("--strategy", choices=["polling", "long_polling"], default="polling")
+    parser.add_argument("--strategy", choices=["polling", "long_polling", "sse"], default="polling")
     parser.add_argument("--duration-seconds", type=float, default=60)
     parser.add_argument("--generation-interval-ms", type=int, required=True)
     parser.add_argument("--poll-interval-ms", type=int, default=1000)
@@ -83,6 +83,8 @@ def configure_generator(base_url: str, interval_ms: int, seed: int | None):
 
 
 def run_benchmark(base_url: str, args: argparse.Namespace) -> list[dict]:
+    if args.strategy == "sse":
+        return run_sse_benchmark(base_url=base_url, args=args)
     if args.strategy == "long_polling":
         return run_long_polling_benchmark(base_url=base_url, args=args)
 
@@ -139,6 +141,129 @@ def run_long_polling_benchmark(base_url: str, args: argparse.Namespace) -> list[
         rows.append(row)
 
     return rows
+
+
+def run_sse_benchmark(base_url: str, args: argparse.Namespace) -> list[dict]:
+    rows = []
+    last_message_id = None
+    stream_started_at = int(time.time() * 1000)
+    end_time = time.monotonic() + args.duration_seconds
+    request = Request(
+        f"{base_url}/api/sse/latest",
+        headers={"Accept": "text/event-stream"},
+        method="GET",
+    )
+
+    try:
+        with urlopen(request, timeout=args.duration_seconds + 10) as response:
+            frame_lines = []
+            frame_bytes = 0
+            while time.monotonic() < end_time:
+                raw_line = response.readline()
+                if raw_line == b"":
+                    break
+
+                frame_bytes += len(raw_line)
+                line = raw_line.decode("utf-8").rstrip("\r\n")
+                if line == "":
+                    event = parse_sse_frame(frame_lines)
+                    if event and event["event"] == "telemetry":
+                        row, last_message_id = sse_event_to_row(
+                            event=event,
+                            strategy=args.strategy,
+                            generation_interval_ms=args.generation_interval_ms,
+                            last_message_id=last_message_id,
+                            response_bytes=frame_bytes,
+                            stream_started_at=stream_started_at,
+                        )
+                        rows.append(row)
+                    frame_lines = []
+                    frame_bytes = 0
+                else:
+                    frame_lines.append(line)
+    except (HTTPError, URLError):
+        rows.append(
+            {
+                "strategy": args.strategy,
+                "generation_interval_ms": args.generation_interval_ms,
+                "poll_interval_ms": "",
+                "long_poll_timeout_ms": "",
+                "request_started_at": stream_started_at,
+                "response_received_at": int(time.time() * 1000),
+                "request_latency_ms": -1,
+                "data_age_ms": -1,
+                "message_id": None,
+                "duplicate": False,
+                "missed_messages": 0,
+                "http_status": 0,
+                "response_bytes": 0,
+            }
+        )
+
+    return rows
+
+
+def parse_sse_frame(lines: list[str]) -> dict | None:
+    if not lines or all(line.startswith(":") for line in lines):
+        return None
+
+    event = {"event": "message", "id": None, "data": ""}
+    data_lines = []
+    for line in lines:
+        if line.startswith(":"):
+            continue
+        field, _, value = line.partition(":")
+        if value.startswith(" "):
+            value = value[1:]
+        if field == "event":
+            event["event"] = value
+        elif field == "id":
+            event["id"] = value
+        elif field == "data":
+            data_lines.append(value)
+
+    event["data"] = "\n".join(data_lines)
+    return event
+
+
+def sse_event_to_row(
+    event: dict,
+    strategy: str,
+    generation_interval_ms: int,
+    last_message_id: int | None,
+    response_bytes: int,
+    stream_started_at: int,
+) -> tuple[dict, int | None]:
+    received_at = int(time.time() * 1000)
+    body = json.loads(event["data"])
+    data = body["data"]
+    message_id = data["message_id"]
+    duplicate = False
+    missed_messages = 0
+
+    if last_message_id is not None:
+        if message_id == last_message_id:
+            duplicate = True
+        elif message_id > last_message_id + 1:
+            missed_messages = message_id - last_message_id - 1
+    last_message_id = message_id
+
+    row = {
+        "strategy": strategy,
+        "generation_interval_ms": generation_interval_ms,
+        "poll_interval_ms": "",
+        "long_poll_timeout_ms": "",
+        "request_started_at": stream_started_at,
+        "response_received_at": received_at,
+        "request_latency_ms": received_at - body["served_at"],
+        "data_age_ms": received_at - data["created_at"],
+        "message_id": message_id,
+        "duplicate": duplicate,
+        "missed_messages": missed_messages,
+        "http_status": 200,
+        "response_bytes": response_bytes,
+    }
+    return row, last_message_id
 
 
 def request_once(
@@ -234,6 +359,8 @@ def summarize(rows: list[dict], args: argparse.Namespace) -> dict:
 
 def result_label(args: argparse.Namespace) -> str:
     timestamp = int(time.time())
+    if args.strategy == "sse":
+        return f"sse_gen{args.generation_interval_ms}_{timestamp}"
     if args.strategy == "long_polling":
         return f"long_polling_gen{args.generation_interval_ms}_timeout{args.long_poll_timeout_ms}_{timestamp}"
     return f"polling_gen{args.generation_interval_ms}_poll{args.poll_interval_ms}_{timestamp}"

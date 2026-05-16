@@ -57,6 +57,8 @@ class RobotDataGenerator:
         if self._task and not self._task.done():
             return
         self._running = True
+        if self._latest is None:
+            await self.generate_once()
         self._task = asyncio.create_task(self._generate_loop())
 
     async def stop(self):
@@ -126,8 +128,22 @@ class RobotDataGenerator:
 
     async def _generate_loop(self):
         while self._running:
+            generation_version = self._generation_version
+            interval_seconds = self.interval_ms / 1000
+            try:
+                async with self._condition:
+                    await asyncio.wait_for(
+                        self._condition.wait_for(
+                            lambda: not self._running
+                            or self._generation_version != generation_version
+                        ),
+                        timeout=interval_seconds,
+                    )
+                continue
+            except asyncio.TimeoutError:
+                pass
+
             await self.generate_once()
-            await asyncio.sleep(self.interval_ms / 1000)
 
     def _generate(self):
         self._message_id += 1

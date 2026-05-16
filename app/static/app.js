@@ -1,5 +1,6 @@
 const POLLING_URL = "/api/polling/latest";
 const LONG_POLLING_URL = "/api/long-polling/latest";
+const SSE_URL = "/api/sse/latest";
 const CONFIG_URL = "/api/simulation/config";
 
 const btnToggle = document.getElementById("btn-toggle");
@@ -16,6 +17,8 @@ let pollTimer = null;
 let polling = false;
 let inflight = false;
 let activeRequestController = null;
+let eventSource = null;
+let sseConnectedAt = null;
 let lastMessageId = null;
 let measurements = [];
 
@@ -78,7 +81,9 @@ async function startPolling() {
   btnToggle.textContent = "Stop";
   btnToggle.classList.add("running");
 
-  if (selectedStrategy() === "long_polling") {
+  if (selectedStrategy() === "sse") {
+    startSseStream();
+  } else if (selectedStrategy() === "long_polling") {
     runLongPollingLoop();
   } else {
     await pollOnce();
@@ -99,6 +104,11 @@ function stopPolling() {
   if (activeRequestController) {
     activeRequestController.abort();
     activeRequestController = null;
+  }
+  if (eventSource) {
+    eventSource.close();
+    eventSource = null;
+    sseConnectedAt = null;
   }
 }
 
@@ -144,6 +154,68 @@ async function runLongPollingLoop() {
       await sleep(Math.min(200 * errorStreak, 5000));
     }
   }
+}
+
+function startSseStream() {
+  sseConnectedAt = Date.now();
+  eventSource = new EventSource(SSE_URL);
+
+  eventSource.addEventListener("telemetry", (event) => {
+    recordSseEvent(event);
+  });
+
+  eventSource.onerror = () => {
+    if (!polling) return;
+    errorCount++;
+    updateMetricsDisplay();
+  };
+}
+
+function recordSseEvent(event) {
+  const receivedAt = Date.now();
+  const responseBytes = new Blob([event.data]).size;
+  const body = JSON.parse(event.data);
+  const data = body.data;
+  const messageId = data.message_id;
+  const dataAge = receivedAt - data.created_at;
+  const requestLatency = body.served_at ? receivedAt - body.served_at : -1;
+  let isDuplicate = false;
+  let missedCount = 0;
+
+  requestsSent++;
+  successCount++;
+  byteTotal += responseBytes;
+  updateRobotDisplay(data, body.served_at);
+  recordSuccessfulLatency(requestLatency, dataAge);
+
+  if (lastMessageId !== null) {
+    if (messageId === lastMessageId) {
+      isDuplicate = true;
+      dupeCount++;
+    } else if (messageId > lastMessageId + 1) {
+      missedCount = messageId - lastMessageId - 1;
+      missedTotal += missedCount;
+    }
+  }
+  lastMessageId = messageId;
+
+  measurements.push({
+    strategy: "sse",
+    generation_interval_ms: Number(generationIntervalSelect.value),
+    poll_interval_ms: "",
+    long_poll_timeout_ms: "",
+    request_started_at: Math.round(sseConnectedAt ?? receivedAt),
+    response_received_at: Math.round(receivedAt),
+    request_latency_ms: Math.round(requestLatency),
+    data_age_ms: Math.round(dataAge),
+    message_id: messageId,
+    duplicate: isDuplicate,
+    missed_messages: missedCount,
+    http_status: 200,
+    response_bytes: responseBytes,
+  });
+
+  updateMetricsDisplay();
 }
 
 async function pollOnce() {
@@ -251,9 +323,11 @@ function selectedStrategy() {
 }
 
 function recordSuccessfulLatency(reqLatency, dataAge) {
-  requestLatencySum += reqLatency;
-  requestLatencyMin = Math.min(requestLatencyMin, reqLatency);
-  requestLatencyMax = Math.max(requestLatencyMax, reqLatency);
+  if (reqLatency >= 0) {
+    requestLatencySum += reqLatency;
+    requestLatencyMin = Math.min(requestLatencyMin, reqLatency);
+    requestLatencyMax = Math.max(requestLatencyMax, reqLatency);
+  }
 
   dataAgeSum += dataAge;
   dataAgeMin = Math.min(dataAgeMin, dataAge);
@@ -283,9 +357,15 @@ function updateMetricsDisplay() {
     setText("met-avgdatage", `${Math.round(dataAgeSum / successCount)} ms`);
     setText("met-mindatage", `${Math.round(dataAgeMin)} ms`);
     setText("met-maxdatage", `${Math.round(dataAgeMax)} ms`);
-    setText("met-avglat", `${Math.round(requestLatencySum / successCount)} ms`);
-    setText("met-minlat", `${Math.round(requestLatencyMin)} ms`);
-    setText("met-maxlat", `${Math.round(requestLatencyMax)} ms`);
+    if (requestLatencyMin < Infinity) {
+      setText("met-avglat", `${Math.round(requestLatencySum / successCount)} ms`);
+      setText("met-minlat", `${Math.round(requestLatencyMin)} ms`);
+      setText("met-maxlat", `${Math.round(requestLatencyMax)} ms`);
+    } else {
+      setText("met-avglat", "-");
+      setText("met-minlat", "-");
+      setText("met-maxlat", "-");
+    }
   } else {
     setText("met-avgdatage", "-");
     setText("met-mindatage", "-");
@@ -355,8 +435,8 @@ function resetMetrics() {
 
 function setControlsEnabled(enabled) {
   strategySelect.disabled = !enabled;
-  pollIntervalSelect.disabled = !enabled || selectedStrategy() === "long_polling";
-  longPollTimeoutSelect.disabled = !enabled || selectedStrategy() === "polling";
+  pollIntervalSelect.disabled = !enabled || selectedStrategy() !== "polling";
+  longPollTimeoutSelect.disabled = !enabled || selectedStrategy() !== "long_polling";
   generationIntervalSelect.disabled = !enabled;
   seedInput.disabled = !enabled;
 }
