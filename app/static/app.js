@@ -178,7 +178,7 @@ function recordSseEvent(event) {
   const data = body.data;
   const messageId = data.message_id;
   const dataAge = receivedAt - data.created_at;
-  const requestLatency = body.served_at ? receivedAt - body.served_at : -1;
+  const requestLatency = -1;
   let isDuplicate = false;
   let missedCount = 0;
 

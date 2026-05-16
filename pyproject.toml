@@ -8,6 +8,10 @@ version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115.0",
+    "grpcio>=1.76.0",
+    "grpcio-tools>=1.76.0",
+    "paho-mqtt>=2.1.0",
+    "protobuf>=6.33.0",
     "uvicorn>=0.30.0",
 ]
 
@@ -19,3 +23,6 @@ dev = [
 
 [tool.setuptools.packages.find]
 include = ["app*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

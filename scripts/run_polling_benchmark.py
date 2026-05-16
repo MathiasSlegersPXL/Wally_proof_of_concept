@@ -1,12 +1,22 @@
 import argparse
 import csv
 import json
+import queue
 import statistics
 import time
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+
+from app.strategies.sse_utils import parse_sse_frame
+
+DEFAULT_MQTT_HOST = "127.0.0.1"
+DEFAULT_MQTT_PORT = 1883
+DEFAULT_MQTT_TOPIC = "wally/robot-1/telemetry"
+DEFAULT_MQTT_QOS = 0
+DEFAULT_GRPC_HOST = "127.0.0.1"
+DEFAULT_GRPC_PORT = 50051
 
 
 CSV_FIELDS = [
@@ -32,11 +42,12 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    configure_generator(
-        base_url=base_url,
-        interval_ms=args.generation_interval_ms,
-        seed=args.seed,
-    )
+    if args.strategy != "mqtt":
+        configure_generator(
+            base_url=base_url,
+            interval_ms=args.generation_interval_ms,
+            seed=args.seed,
+        )
 
     rows = run_benchmark(base_url=base_url, args=args)
     summary = summarize(rows, args)
@@ -60,11 +71,17 @@ def main():
 def parse_args():
     parser = argparse.ArgumentParser(description="Run an update-strategy benchmark against the Wally PoC API.")
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
-    parser.add_argument("--strategy", choices=["polling", "long_polling", "sse"], default="polling")
+    parser.add_argument("--strategy", choices=["polling", "long_polling", "sse", "mqtt", "grpc"], default="polling")
     parser.add_argument("--duration-seconds", type=float, default=60)
     parser.add_argument("--generation-interval-ms", type=int, required=True)
     parser.add_argument("--poll-interval-ms", type=int, default=1000)
     parser.add_argument("--long-poll-timeout-ms", type=int, default=30_000)
+    parser.add_argument("--mqtt-host", default=DEFAULT_MQTT_HOST)
+    parser.add_argument("--mqtt-port", type=int, default=DEFAULT_MQTT_PORT)
+    parser.add_argument("--mqtt-topic", default=DEFAULT_MQTT_TOPIC)
+    parser.add_argument("--mqtt-qos", type=int, default=DEFAULT_MQTT_QOS)
+    parser.add_argument("--grpc-host", default=DEFAULT_GRPC_HOST)
+    parser.add_argument("--grpc-port", type=int, default=DEFAULT_GRPC_PORT)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--output-dir", default="results")
     return parser.parse_args()
@@ -83,6 +100,10 @@ def configure_generator(base_url: str, interval_ms: int, seed: int | None):
 
 
 def run_benchmark(base_url: str, args: argparse.Namespace) -> list[dict]:
+    if args.strategy == "mqtt":
+        return run_mqtt_benchmark(base_url=base_url, args=args)
+    if args.strategy == "grpc":
+        return run_grpc_benchmark(args=args)
     if args.strategy == "sse":
         return run_sse_benchmark(base_url=base_url, args=args)
     if args.strategy == "long_polling":
@@ -141,6 +162,198 @@ def run_long_polling_benchmark(base_url: str, args: argparse.Namespace) -> list[
         rows.append(row)
 
     return rows
+
+
+def run_grpc_benchmark(args: argparse.Namespace) -> list[dict]:
+    import grpc
+
+    from app.grpc_generated import telemetry_pb2, telemetry_pb2_grpc
+
+    rows = []
+    last_message_id = None
+    stream_started_at = int(time.time() * 1000)
+    end_time = time.monotonic() + args.duration_seconds
+    target = f"{args.grpc_host}:{args.grpc_port}"
+
+    try:
+        with grpc.insecure_channel(target) as channel:
+            stub = telemetry_pb2_grpc.TelemetryServiceStub(channel)
+            request = telemetry_pb2.SubscribeRequest(last_message_id=0)
+            stream = stub.StreamTelemetry(request, timeout=args.duration_seconds + 10)
+
+            for message in stream:
+                if time.monotonic() >= end_time:
+                    break
+
+                row, last_message_id = grpc_message_to_row(
+                    message=message,
+                    generation_interval_ms=args.generation_interval_ms,
+                    last_message_id=last_message_id,
+                    stream_started_at=stream_started_at,
+                    received_at=int(time.time() * 1000),
+                )
+                rows.append(row)
+    except grpc.RpcError:
+        rows.append(
+            {
+                "strategy": "grpc",
+                "generation_interval_ms": args.generation_interval_ms,
+                "poll_interval_ms": "",
+                "long_poll_timeout_ms": "",
+                "request_started_at": stream_started_at,
+                "response_received_at": int(time.time() * 1000),
+                "request_latency_ms": -1,
+                "data_age_ms": -1,
+                "message_id": None,
+                "duplicate": False,
+                "missed_messages": 0,
+                "http_status": 0,
+                "response_bytes": 0,
+            }
+        )
+
+    return rows
+
+
+def grpc_message_to_row(
+    message,
+    generation_interval_ms: int,
+    last_message_id: int | None,
+    stream_started_at: int,
+    received_at: int,
+) -> tuple[dict, int | None]:
+    message_id = message.data.message_id
+    duplicate = False
+    missed_messages = 0
+
+    if last_message_id is not None:
+        if message_id == last_message_id:
+            duplicate = True
+        elif message_id > last_message_id + 1:
+            missed_messages = message_id - last_message_id - 1
+    last_message_id = message_id
+
+    row = {
+        "strategy": "grpc",
+        "generation_interval_ms": generation_interval_ms,
+        "poll_interval_ms": "",
+        "long_poll_timeout_ms": "",
+        "request_started_at": stream_started_at,
+        "response_received_at": received_at,
+        "request_latency_ms": -1,
+        "data_age_ms": received_at - message.data.created_at,
+        "message_id": message_id,
+        "duplicate": duplicate,
+        "missed_messages": missed_messages,
+        "http_status": 200,
+        "response_bytes": message.ByteSize(),
+    }
+    return row, last_message_id
+
+
+def run_mqtt_benchmark(base_url: str, args: argparse.Namespace) -> list[dict]:
+    import paho.mqtt.client as mqtt
+
+    rows = []
+    messages = queue.Queue()
+    last_message_id = None
+    stream_started_at = int(time.time() * 1000)
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+
+    def on_message(client, userdata, message):
+        messages.put((int(time.time() * 1000), message.payload))
+
+    client.on_message = on_message
+
+    try:
+        client.connect(args.mqtt_host, args.mqtt_port)
+        client.subscribe(args.mqtt_topic, qos=args.mqtt_qos)
+        client.loop_start()
+        time.sleep(0.2)
+
+        configure_generator(
+            base_url=base_url,
+            interval_ms=args.generation_interval_ms,
+            seed=args.seed,
+        )
+
+        end_time = time.monotonic() + args.duration_seconds
+        while time.monotonic() < end_time:
+            timeout = min(0.2, max(0, end_time - time.monotonic()))
+            try:
+                received_at, payload = messages.get(timeout=timeout)
+            except queue.Empty:
+                continue
+
+            row, last_message_id = mqtt_message_to_row(
+                payload=payload,
+                generation_interval_ms=args.generation_interval_ms,
+                last_message_id=last_message_id,
+                stream_started_at=stream_started_at,
+                received_at=received_at,
+            )
+            rows.append(row)
+    except (HTTPError, OSError, URLError, ValueError):
+        rows.append(
+            {
+                "strategy": "mqtt",
+                "generation_interval_ms": args.generation_interval_ms,
+                "poll_interval_ms": "",
+                "long_poll_timeout_ms": "",
+                "request_started_at": stream_started_at,
+                "response_received_at": int(time.time() * 1000),
+                "request_latency_ms": -1,
+                "data_age_ms": -1,
+                "message_id": None,
+                "duplicate": False,
+                "missed_messages": 0,
+                "http_status": 0,
+                "response_bytes": 0,
+            }
+        )
+    finally:
+        client.loop_stop()
+        client.disconnect()
+
+    return rows
+
+
+def mqtt_message_to_row(
+    payload: bytes,
+    generation_interval_ms: int,
+    last_message_id: int | None,
+    stream_started_at: int,
+    received_at: int,
+) -> tuple[dict, int | None]:
+    body = json.loads(payload.decode("utf-8"))
+    data = body["data"]
+    message_id = data["message_id"]
+    duplicate = False
+    missed_messages = 0
+
+    if last_message_id is not None:
+        if message_id == last_message_id:
+            duplicate = True
+        elif message_id > last_message_id + 1:
+            missed_messages = message_id - last_message_id - 1
+    last_message_id = message_id
+
+    row = {
+        "strategy": "mqtt",
+        "generation_interval_ms": generation_interval_ms,
+        "poll_interval_ms": "",
+        "long_poll_timeout_ms": "",
+        "request_started_at": stream_started_at,
+        "response_received_at": received_at,
+        "request_latency_ms": -1,
+        "data_age_ms": received_at - data["created_at"],
+        "message_id": message_id,
+        "duplicate": duplicate,
+        "missed_messages": missed_messages,
+        "http_status": 200,
+        "response_bytes": len(payload),
+    }
+    return row, last_message_id
 
 
 def run_sse_benchmark(base_url: str, args: argparse.Namespace) -> list[dict]:
@@ -203,29 +416,6 @@ def run_sse_benchmark(base_url: str, args: argparse.Namespace) -> list[dict]:
     return rows
 
 
-def parse_sse_frame(lines: list[str]) -> dict | None:
-    if not lines or all(line.startswith(":") for line in lines):
-        return None
-
-    event = {"event": "message", "id": None, "data": ""}
-    data_lines = []
-    for line in lines:
-        if line.startswith(":"):
-            continue
-        field, _, value = line.partition(":")
-        if value.startswith(" "):
-            value = value[1:]
-        if field == "event":
-            event["event"] = value
-        elif field == "id":
-            event["id"] = value
-        elif field == "data":
-            data_lines.append(value)
-
-    event["data"] = "\n".join(data_lines)
-    return event
-
-
 def sse_event_to_row(
     event: dict,
     strategy: str,
@@ -255,7 +445,7 @@ def sse_event_to_row(
         "long_poll_timeout_ms": "",
         "request_started_at": stream_started_at,
         "response_received_at": received_at,
-        "request_latency_ms": received_at - body["served_at"],
+        "request_latency_ms": -1,
         "data_age_ms": received_at - data["created_at"],
         "message_id": message_id,
         "duplicate": duplicate,
@@ -329,7 +519,7 @@ def request_once(
 
 def summarize(rows: list[dict], args: argparse.Namespace) -> dict:
     success_rows = [row for row in rows if row["http_status"] == 200]
-    latencies = [row["request_latency_ms"] for row in success_rows]
+    latencies = [row["request_latency_ms"] for row in success_rows if row["request_latency_ms"] >= 0]
     data_ages = [row["data_age_ms"] for row in success_rows if row["data_age_ms"] >= 0]
     duplicate_count = sum(1 for row in rows if row["duplicate"])
     missed_count = sum(row["missed_messages"] for row in rows)
@@ -342,6 +532,8 @@ def summarize(rows: list[dict], args: argparse.Namespace) -> dict:
         "generation_interval_ms": args.generation_interval_ms,
         "poll_interval_ms": args.poll_interval_ms if args.strategy == "polling" else None,
         "long_poll_timeout_ms": args.long_poll_timeout_ms if args.strategy == "long_polling" else None,
+        "mqtt_topic": args.mqtt_topic if args.strategy == "mqtt" else None,
+        "grpc_target": f"{args.grpc_host}:{args.grpc_port}" if args.strategy == "grpc" else None,
         "seed": args.seed,
         "requests_sent": len(rows),
         "successful_responses": len(success_rows),
@@ -359,6 +551,10 @@ def summarize(rows: list[dict], args: argparse.Namespace) -> dict:
 
 def result_label(args: argparse.Namespace) -> str:
     timestamp = int(time.time())
+    if args.strategy == "grpc":
+        return f"grpc_gen{args.generation_interval_ms}_{timestamp}"
+    if args.strategy == "mqtt":
+        return f"mqtt_gen{args.generation_interval_ms}_{timestamp}"
     if args.strategy == "sse":
         return f"sse_gen{args.generation_interval_ms}_{timestamp}"
     if args.strategy == "long_polling":

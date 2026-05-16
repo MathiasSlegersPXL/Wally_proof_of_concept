@@ -8,7 +8,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.data_generator import RobotDataGenerator
+from app.strategies.grpc_streaming import GrpcTelemetryService, grpc_config_from_env
 from app.strategies.long_polling import router as long_polling_router
+from app.strategies.mqtt import MqttPublisherService, mqtt_config_from_env
 from app.strategies.polling import router as polling_router
 from app.strategies.sse import router as sse_router
 
@@ -27,8 +29,14 @@ class SimulationConfigUpdate(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.generator = generator
+    app.state.mqtt_publisher = MqttPublisherService(generator, mqtt_config_from_env())
+    app.state.grpc_service = GrpcTelemetryService(generator, grpc_config_from_env())
     await generator.start()
+    await app.state.mqtt_publisher.start()
+    await app.state.grpc_service.start()
     yield
+    await app.state.grpc_service.stop()
+    await app.state.mqtt_publisher.stop()
     await generator.stop()
 
 

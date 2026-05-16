@@ -1,22 +1,26 @@
 # Wally Proof of Concept
 
-HTTP polling, long-polling, and Server-Sent Events baseline for comparing real-time dashboard update strategies against simulated robot telemetry.
+HTTP polling, long-polling, Server-Sent Events, MQTT, and gRPC baseline for comparing real-time dashboard update strategies against simulated robot telemetry.
 
-Part of the Wally Automation research track — the goal is to quantitatively compare polling, long polling, SSE, WebSocket, and MQTT for operational robot monitoring. This repository currently implements the HTTP-based polling strategies and SSE server push.
+Part of the Wally Automation research track — the goal is to quantitatively compare polling, long polling, SSE, MQTT, and gRPC for operational robot monitoring. MQTT and gRPC are treated as internal backend infrastructure, not as browser-facing protocols.
 
 ## Architecture
 
 ```
 RobotDataGenerator ──(latest state / notifications)──> FastAPI ──(HTTP/SSE)──> Browser or CLI
+           │
+           └──(MQTT publish)──> Mosquitto ──> CLI benchmark subscriber
+           └──(gRPC stream)───> CLI benchmark client
    (background task)                               polling: immediate response
                                                    long polling: wait for new data
                                                    SSE: persistent server-push stream
 ```
 
 - **Data Generator** (`app/data_generator.py`) — runs a background asyncio task that produces robot telemetry at a configurable interval. Stores only the latest state in memory. Deterministic when seeded.
-- **FastAPI** (`app/main.py`, `app/strategies/`) — exposes short polling, long polling, and SSE endpoints and lets the frontend or CLI reconfigure the generator at runtime.
+- **FastAPI** (`app/main.py`, `app/strategies/`) — exposes short polling, long polling, and SSE endpoints, and can publish/stream telemetry through MQTT or gRPC when enabled.
 - **Frontend** (`app/static/`) — vanilla JS dashboard for interactive testing: choose strategy, adjust intervals, view live data and metrics, export CSV.
-- **Benchmark runner** (`scripts/run_polling_benchmark.py`) — headless CLI tool that runs a timed polling session and writes raw CSV + summary JSON to `results/`.
+- **MQTT broker** — local Mosquitto on `127.0.0.1:1883` for internal publish/subscribe benchmarking.
+- **Benchmark runner** (`scripts/run_polling_benchmark.py`) — headless CLI tool that runs timed strategy sessions and writes raw CSV + summary JSON to `results/`.
 
 ## Setup
 
@@ -43,6 +47,34 @@ The dashboard controls let you set:
 - **Seed** — deterministic starting point for the pseudo-random generator; same seed = same data sequence across runs
 
 Pressing **Start** resets the generator and begins a new measurement session. Press **Stop** ends it. **Export CSV** downloads all per-request or per-event measurements.
+
+## Run MQTT Locally
+
+Install and start Mosquitto locally, then start the app with MQTT enabled:
+
+```bash
+MQTT_ENABLED=1 uvicorn app.main:app --reload
+```
+
+Defaults:
+
+- `MQTT_HOST=127.0.0.1`
+- `MQTT_PORT=1883`
+- `MQTT_TOPIC=wally/robot-1/telemetry`
+- `MQTT_QOS=0`
+
+## Run gRPC Locally
+
+Start the app with gRPC enabled:
+
+```bash
+GRPC_ENABLED=1 uvicorn app.main:app --reload
+```
+
+Defaults:
+
+- `GRPC_HOST=127.0.0.1`
+- `GRPC_PORT=50051`
 
 ## API
 
@@ -113,7 +145,7 @@ Browsers automatically send `Last-Event-ID` after reconnects. The API uses that 
 | Metric | Definition |
 |--------|------------|
 | **data age** | Time from telemetry creation (`created_at`) to response receipt in the client. The key metric for strategy comparison — captures inherent polling delay. |
-| **request latency** | Full HTTP round-trip: `fetch()` start to response arrival. Measures network + server overhead, not strategy delay. |
+| **request latency** | Full HTTP round-trip for polling and long polling. SSE, MQTT, and gRPC use persistent push/subscription/streaming flows, so request latency is recorded as not applicable (`-1`). |
 | **duplicate** | Same `message_id` received more than once. Occurs when polling faster than data generation. |
 | **missed messages** | Gaps in the monotonic `message_id` sequence. Occurs when polling slower than data generation. |
 | **downloaded bytes** | Approximate response body size. Excludes HTTP headers and TCP overhead. |
@@ -136,10 +168,16 @@ python scripts/run_polling_benchmark.py \
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--base-url` | `http://127.0.0.1:8000` | API server location |
-| `--strategy` | `polling` | `polling`, `long_polling`, or `sse` |
+| `--strategy` | `polling` | `polling`, `long_polling`, `sse`, `mqtt`, or `grpc` |
 | `--generation-interval-ms` | (required) | Generator tick interval |
 | `--poll-interval-ms` | `1000` | Client poll interval for `polling` |
 | `--long-poll-timeout-ms` | `30000` | Server wait timeout for `long_polling` |
+| `--mqtt-host` | `127.0.0.1` | MQTT broker host for `mqtt` |
+| `--mqtt-port` | `1883` | MQTT broker port for `mqtt` |
+| `--mqtt-topic` | `wally/robot-1/telemetry` | MQTT topic for `mqtt` |
+| `--mqtt-qos` | `0` | MQTT QoS for `mqtt` |
+| `--grpc-host` | `127.0.0.1` | gRPC server host for `grpc` |
+| `--grpc-port` | `50051` | gRPC server port for `grpc` |
 | `--duration-seconds` | `60` | How long to run |
 | `--seed` | `1` | Deterministic seed |
 | `--output-dir` | `results` | Where to write CSV and JSON |
@@ -149,6 +187,8 @@ Output examples:
 - `results/polling_gen{gen}_poll{poll}_{timestamp}.csv`
 - `results/long_polling_gen{gen}_timeout{timeout}_{timestamp}.csv`
 - `results/sse_gen{gen}_{timestamp}.csv`
+- `results/mqtt_gen{gen}_{timestamp}.csv`
+- `results/grpc_gen{gen}_{timestamp}.csv`
 
 Each CSV has raw request rows. Each JSON has summary averages, rates, totals, and timeout counts.
 
@@ -172,6 +212,12 @@ python scripts/run_polling_benchmark.py --strategy long_polling --generation-int
 
 # Scenario 6 — SSE: expect low data age and one persistent stream
 python scripts/run_polling_benchmark.py --strategy sse --generation-interval-ms 1000 --duration-seconds 60
+
+# Scenario 7 — MQTT: expect low data age through internal broker publish/subscribe
+python scripts/run_polling_benchmark.py --strategy mqtt --generation-interval-ms 1000 --duration-seconds 60
+
+# Scenario 8 — gRPC: expect low data age through internal server streaming
+python scripts/run_polling_benchmark.py --strategy grpc --generation-interval-ms 1000 --duration-seconds 60
 ```
 
 ## Project Structure
@@ -183,7 +229,11 @@ app/
 └── strategies/
     ├── polling.py           # GET /api/polling/latest endpoint
     ├── long_polling.py      # GET /api/long-polling/latest endpoint
+    ├── grpc_streaming.py    # Optional gRPC telemetry stream
+    ├── mqtt.py              # Optional MQTT publisher service
     └── sse.py               # GET /api/sse/latest event stream
+proto/
+└── telemetry.proto           # gRPC telemetry service definition
 app/static/
 ├── index.html               # Polling dashboard UI
 ├── app.js                   # Polling logic, metrics tracking, CSV export
@@ -207,7 +257,8 @@ pytest
 
 - **No database** — polling latency and data age are the focus; a database would add noise unrelated to the strategy.
 - **No framework in the frontend** — vanilla JS keeps the measurement path transparent and avoids framework overhead in latency numbers.
-- **Shared data generator** — the same `RobotDataGenerator` feeds polling, long polling, and SSE, and will feed WebSocket and MQTT strategies later.
+- **Shared data generator** — the same `RobotDataGenerator` feeds polling, long polling, SSE, MQTT, and gRPC.
+- **MQTT and gRPC are internal** — the backend talks to broker/stream clients; the browser dashboard does not connect to robot-side protocols.
 - **Long polling waits server-side** — the client passes `last_message_id`; the server waits for a newer generated message or returns `204` on timeout.
 - **Deterministic seeding** — same seed = same `message_id` sequence, same status transitions. Makes scenario re-runs directly comparable.
 

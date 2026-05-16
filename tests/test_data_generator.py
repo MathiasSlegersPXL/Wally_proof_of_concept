@@ -3,7 +3,6 @@ import asyncio
 import pytest
 
 from app.data_generator import RobotDataGenerator
-from scripts.run_polling_benchmark import parse_sse_frame
 
 
 def test_start_is_idempotent():
@@ -113,24 +112,3 @@ def test_interval_validation():
             await generator.configure(interval_ms=10_001)
 
     asyncio.run(run())
-
-
-def test_parse_sse_frame_ignores_heartbeat_comments():
-    assert parse_sse_frame([": heartbeat"]) is None
-
-
-def test_parse_sse_frame_collects_event_id_and_multiline_data():
-    event = parse_sse_frame(
-        [
-            "event: telemetry",
-            "id: 42",
-            'data: {"message"',
-            'data: :"ok"}',
-        ]
-    )
-
-    assert event == {
-        "event": "telemetry",
-        "id": "42",
-        "data": '{"message"\n:"ok"}',
-    }

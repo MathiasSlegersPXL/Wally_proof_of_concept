@@ -1,4 +1,3 @@
-import asyncio
 import json
 import time
 
@@ -6,6 +5,7 @@ from fastapi import APIRouter, Request
 from starlette.responses import JSONResponse, StreamingResponse
 
 from app.strategies.common import build_strategy_response, get_generator
+from app.strategies.sse_utils import format_sse_event, parse_last_event_id
 
 HEARTBEAT_INTERVAL_MS = 15_000
 
@@ -50,24 +50,3 @@ async def event_stream(request: Request, generator, last_message_id: int | None)
             event_id=str(data.message_id),
             data=json.dumps(payload, separators=(",", ":")),
         )
-
-        await asyncio.sleep(0)
-
-
-def parse_last_event_id(value: str | None) -> int | None:
-    if value is None or value == "":
-        return None
-    try:
-        parsed = int(value)
-    except ValueError:
-        return None
-    if parsed < 0:
-        return None
-    return parsed
-
-
-def format_sse_event(event: str, event_id: str, data: str) -> str:
-    lines = [f"event: {event}", f"id: {event_id}"]
-    for line in data.splitlines() or [""]:
-        lines.append(f"data: {line}")
-    return "\n".join(lines) + "\n\n"

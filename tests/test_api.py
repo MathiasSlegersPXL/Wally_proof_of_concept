@@ -3,10 +3,11 @@ import json
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from starlette.requests import Request
 
 from app.data_generator import RobotDataGenerator
 from app.main import app
-from app.strategies.sse import event_stream
+from app.strategies.sse import event_stream, stream_latest
 
 
 @pytest.fixture
@@ -132,6 +133,25 @@ async def test_sse_latest_stream_returns_first_event_with_current_data(client):
     assert "served_at" in body
     assert "server_processing_ms" in body
     assert body["data"]["message_id"] == 1
+
+
+@pytest.mark.anyio
+async def test_sse_latest_route_returns_streaming_response_headers(client):
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/sse/latest",
+            "headers": [],
+            "app": app,
+        }
+    )
+
+    response = await stream_latest(request)
+
+    assert response.media_type == "text/event-stream"
+    assert response.headers["cache-control"] == "no-cache"
+    assert response.headers["x-accel-buffering"] == "no"
 
 
 @pytest.mark.anyio
