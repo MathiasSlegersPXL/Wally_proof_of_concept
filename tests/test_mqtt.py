@@ -1,15 +1,24 @@
 import json
 
+import pytest
+
 from app.data_generator import RobotData
 from app.strategies.mqtt import (
     DEFAULT_MQTT_HOST,
     DEFAULT_MQTT_PORT,
     DEFAULT_MQTT_QOS,
     DEFAULT_MQTT_TOPIC,
+    MqttConfig,
+    MqttPublisherService,
     build_mqtt_payload,
     mqtt_config_from_env,
 )
 from scripts.run_polling_benchmark import mqtt_message_to_row
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
 
 
 def robot_data(message_id: int, created_at: int = 1_000) -> RobotData:
@@ -113,3 +122,26 @@ def test_mqtt_message_to_row_detects_duplicate_and_missed_messages():
     assert missed_row["duplicate"] is False
     assert missed_row["missed_messages"] == 2
     assert last_message_id == 5
+
+
+@pytest.mark.anyio
+async def test_mqtt_start_reports_unavailable_broker(monkeypatch):
+    class FailingClient:
+        def connect(self, host, port):
+            raise ConnectionRefusedError("broker unavailable")
+
+    async def fake_to_thread(func, *args):
+        return func(*args)
+
+    monkeypatch.setattr("app.strategies.mqtt.asyncio.to_thread", fake_to_thread)
+
+    service = MqttPublisherService(
+        generator=None,
+        config=MqttConfig(enabled=True, host="127.0.0.1", port=1883),
+    )
+    service._create_client = lambda: FailingClient()
+
+    with pytest.raises(RuntimeError, match="broker is unavailable at 127.0.0.1:1883"):
+        await service.start()
+
+    assert service._client is None

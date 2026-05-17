@@ -55,8 +55,16 @@ class MqttPublisherService:
             return
 
         self._client = self._create_client()
-        await asyncio.to_thread(self._client.connect, self.config.host, self.config.port)
-        self._client.loop_start()
+        try:
+            await asyncio.to_thread(self._client.connect, self.config.host, self.config.port)
+            self._client.loop_start()
+        except OSError as exc:
+            self._client = None
+            raise RuntimeError(
+                "MQTT is enabled, but the broker is unavailable at "
+                f"{self.config.host}:{self.config.port}. Start Mosquitto there, "
+                "or unset MQTT_ENABLED to run without MQTT."
+            ) from exc
         self._running = True
         self._task = asyncio.create_task(self._publish_loop())
 

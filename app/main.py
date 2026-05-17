@@ -31,13 +31,15 @@ async def lifespan(app: FastAPI):
     app.state.generator = generator
     app.state.mqtt_publisher = MqttPublisherService(generator, mqtt_config_from_env())
     app.state.grpc_service = GrpcTelemetryService(generator, grpc_config_from_env())
-    await generator.start()
-    await app.state.mqtt_publisher.start()
-    await app.state.grpc_service.start()
-    yield
-    await app.state.grpc_service.stop()
-    await app.state.mqtt_publisher.stop()
-    await generator.stop()
+    try:
+        await generator.start()
+        await app.state.mqtt_publisher.start()
+        await app.state.grpc_service.start()
+        yield
+    finally:
+        await app.state.grpc_service.stop()
+        await app.state.mqtt_publisher.stop()
+        await generator.stop()
 
 
 app = FastAPI(title="Wally POC - Realtime Strategies", lifespan=lifespan)
