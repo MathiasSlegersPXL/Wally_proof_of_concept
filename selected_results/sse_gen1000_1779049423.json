@@ -1,0 +1,29 @@
+{
+  "strategy": "sse",
+  "duration_seconds": 120.0,
+  "generation_interval_ms": 1000,
+  "poll_interval_ms": null,
+  "long_poll_timeout_ms": null,
+  "mqtt_topic": null,
+  "grpc_target": null,
+  "seed": 1,
+  "requests_sent": 120,
+  "successful_responses": 120,
+  "empty_responses": 0,
+  "timeouts": 0,
+  "errors": 0,
+  "duplicates": 0,
+  "duplicate_rate": 0.0,
+  "missed_messages": 0,
+  "downloaded_bytes": 39083,
+  "request_latency_ms": {
+    "avg": null,
+    "min": null,
+    "max": null
+  },
+  "data_age_ms": {
+    "avg": 1.32,
+    "min": 0,
+    "max": 6
+  }
+}

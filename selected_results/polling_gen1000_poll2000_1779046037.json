@@ -1,0 +1,29 @@
+{
+  "strategy": "polling",
+  "duration_seconds": 120.0,
+  "generation_interval_ms": 1000,
+  "poll_interval_ms": 2000,
+  "long_poll_timeout_ms": null,
+  "mqtt_topic": null,
+  "grpc_target": null,
+  "seed": 1,
+  "requests_sent": 61,
+  "successful_responses": 61,
+  "empty_responses": 0,
+  "timeouts": 0,
+  "errors": 0,
+  "duplicates": 0,
+  "duplicate_rate": 0.0,
+  "missed_messages": 58,
+  "downloaded_bytes": 18134,
+  "request_latency_ms": {
+    "avg": 3.3,
+    "min": 2,
+    "max": 7
+  },
+  "data_age_ms": {
+    "avg": 677.95,
+    "min": 2,
+    "max": 1001
+  }
+}
