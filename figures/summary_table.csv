@@ -1,0 +1,8 @@
+strategy,runs,data_age_avg_ms,data_age_std_ms,downloaded_kib,requests_sent,duplicate_rate,missed_messages,request_latency_avg_ms
+Polling 250 ms,3,560.49,6.81,139.75,481.00,0.7505,0.00,3.81
+Polling 1000 ms,3,914.56,11.69,35.16,121.00,0.0083,0.00,3.46
+Polling 2000 ms,3,823.95,126.46,17.72,61.00,0.0000,58.67,3.70
+Long polling,3,1.70,0.60,35.97,121.00,0.0000,0.00,992.54
+SSE,3,1.26,0.07,38.17,120.00,0.0000,0.00,
+MQTT,3,1.76,0.15,31.12,120.00,0.0000,0.00,
+gRPC,3,2.21,0.10,10.43,120.00,0.0000,0.00,

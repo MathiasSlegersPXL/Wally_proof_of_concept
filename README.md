@@ -192,6 +192,24 @@ Output examples:
 
 Each CSV has raw request rows. Each JSON has summary averages, rates, totals, and timeout counts.
 
+## Generate Paper Figures
+
+The selected benchmark results can be converted to publication-ready figures with matplotlib:
+
+```bash
+python scripts/plot_selected_results.py
+```
+
+By default, the script reads `selected_results/*.json` and writes `png` and `svg` figures to `figures/`.
+It also writes `figures/summary_table.csv` with the aggregated values used in the charts.
+
+Useful options:
+
+```bash
+python scripts/plot_selected_results.py --formats svg pdf
+python scripts/plot_selected_results.py --input-dir selected_results --output-dir figures
+```
+
 ### Recommended scenarios
 
 ```bash
@@ -239,6 +257,7 @@ app/static/
 ├── app.js                   # Polling logic, metrics tracking, CSV export
 └── style.css                # Styling
 scripts/
+├── plot_selected_results.py # Matplotlib figures from selected summary JSON files
 └── run_polling_benchmark.py # Headless CLI benchmark
 tests/
 ├── test_api.py
