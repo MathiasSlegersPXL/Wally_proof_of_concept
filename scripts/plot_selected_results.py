@@ -1,4 +1,5 @@
 import argparse
+import csv
 import json
 import math
 import os
@@ -70,6 +71,12 @@ class RunSummary:
     request_latency_avg_ms: float | None
 
 
+@dataclass(frozen=True)
+class RawMeasurement:
+    key: str
+    data_age_ms: float
+
+
 def main() -> None:
     args = parse_args()
     input_dir = Path(args.input_dir)
@@ -90,6 +97,7 @@ def main() -> None:
     plot_reliability(groups, ordered_keys, output_dir, args.formats)
     plot_request_volume(groups, ordered_keys, output_dir, args.formats)
     plot_polling_interval_tradeoff(groups, output_dir, args.formats)
+    plot_data_age_distribution(load_raw_measurements(input_dir), ordered_keys, output_dir, args.formats)
 
     print(f"Wrote figures and summary table to {output_dir}")
 
@@ -117,6 +125,28 @@ def load_runs(input_dir: Path) -> list[RunSummary]:
             data = json.load(json_file)
         runs.append(parse_run(path, data))
     return runs
+
+
+def load_raw_measurements(input_dir: Path) -> list[RawMeasurement]:
+    measurements = []
+    for path in sorted(input_dir.glob("*.csv")):
+        with path.open(newline="", encoding="utf-8") as csv_file:
+            reader = csv.DictReader(csv_file)
+            for row in reader:
+                measurement = parse_raw_measurement(row)
+                if measurement is not None:
+                    measurements.append(measurement)
+    return measurements
+
+
+def parse_raw_measurement(row: dict[str, str]) -> RawMeasurement | None:
+    data_age_ms = clean_number(row.get("data_age_ms"))
+    if data_age_ms is None or data_age_ms < 0:
+        return None
+
+    poll_interval_ms = clean_int(row.get("poll_interval_ms"))
+    key = result_key(row["strategy"], poll_interval_ms)
+    return RawMeasurement(key=key, data_age_ms=data_age_ms)
 
 
 def parse_run(path: Path, data: dict[str, Any]) -> RunSummary:
@@ -151,12 +181,18 @@ def result_key(strategy: str, poll_interval_ms: int | None) -> str:
 
 
 def clean_number(value: Any) -> float | None:
-    if value is None:
+    if value is None or value == "":
         return None
     number = float(value)
     if math.isnan(number):
         return None
     return number
+
+
+def clean_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    return int(float(value))
 
 
 def group_runs(runs: list[RunSummary]) -> dict[str, list[RunSummary]]:
@@ -330,6 +366,70 @@ def plot_polling_interval_tradeoff(
     ax_left.legend(lines, [line.get_label() for line in lines], loc="best")
     fig.tight_layout()
     save_figure(fig, output_dir / "polling_interval_tradeoff", formats)
+
+
+def plot_data_age_distribution(
+    measurements: list[RawMeasurement],
+    keys: list[str],
+    output_dir: Path,
+    formats: list[str],
+) -> None:
+    polling_keys = [key for key in ["polling_250", "polling_1000", "polling_2000"] if key in keys]
+    push_keys = [key for key in ["long_polling", "sse", "mqtt", "grpc"] if key in keys]
+    polling_values = grouped_measurements(measurements, polling_keys)
+    push_values = grouped_measurements(measurements, push_keys)
+    if not polling_values and not push_values:
+        return
+
+    fig, axes = plt.subplots(1, 2, figsize=(10.5, 4.5), gridspec_kw={"width_ratios": [1.15, 1]})
+    draw_horizontal_boxplot(axes[0], polling_values, "Short polling", "Data age (ms)", xlim=(0, 1050))
+    draw_horizontal_boxplot(axes[1], push_values, "Push en streaming", "Data age (ms)", xlim=(0, 10))
+    fig.suptitle("Spreiding van data age per strategie", y=0.99)
+    fig.tight_layout()
+    save_figure(fig, output_dir / "data_age_distribution_by_strategy", formats)
+
+
+def grouped_measurements(measurements: list[RawMeasurement], keys: list[str]) -> list[tuple[str, list[float]]]:
+    groups = []
+    for key in keys:
+        values = [measurement.data_age_ms for measurement in measurements if measurement.key == key]
+        if values:
+            groups.append((key, values))
+    return groups
+
+
+def draw_horizontal_boxplot(
+    ax: plt.Axes,
+    groups: list[tuple[str, list[float]]],
+    title: str,
+    xlabel: str,
+    xlim: tuple[float, float],
+) -> None:
+    if not groups:
+        ax.set_visible(False)
+        return
+
+    keys = [key for key, _ in groups]
+    values = [group_values for _, group_values in groups]
+    boxplot = ax.boxplot(
+        values,
+        vert=False,
+        patch_artist=True,
+        showfliers=False,
+        medianprops={"color": "#111111", "linewidth": 1.4},
+        whiskerprops={"color": "#555555"},
+        capprops={"color": "#555555"},
+    )
+    for patch, key in zip(boxplot["boxes"], keys, strict=True):
+        patch.set_facecolor(COLORS.get(key, "#777777"))
+        patch.set_alpha(0.8)
+
+    ax.set_yticks(range(1, len(keys) + 1), [LABELS.get(key, key) for key in keys])
+    ax.set_xlabel(xlabel)
+    ax.set_title(title)
+    ax.set_xlim(*xlim)
+    ax.grid(axis="x", visible=True)
+    ax.grid(axis="y", visible=False)
 
 
 def bar_plot(
